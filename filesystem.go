@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 	//"regexp"
 )
 
@@ -14,7 +15,7 @@ type GitFileSystem struct {
 	Repo *git.Repository
 }
 
-func (g *GitFileSystem) Open(name string) (http.File, error) {
+func (g *GitFileSystem) Open(name string) (file http.File, err error) {
 	// var id string
 	// reg, err := regexp.Compile("^/(.*?)\\..*$")
 	// if matches := reg.FindStringSubmatch(name); len(matches) > 1 {
@@ -45,15 +46,18 @@ func (g *GitFileSystem) Open(name string) (http.File, error) {
 		log.Fatal(err)
 	}
 
-	treeEntry := tree.EntryByName(name[1:])
+	tree.Walk(git.TreeWalkCallback(func(s string, entry *git.TreeEntry) int {
+		if entry.Name == name[1:] {
+			OdbObj, err := odb.Read(entry.Id)
+			if err != nil {
+				panic(err)
+			}
+			file = &GitFile{name: name[1:], obj: OdbObj, when: commit.Committer().When}
+		}
+		return 0
+	}))
 
-	OdbObj, err := odb.Read(treeEntry.Id)
-	defer OdbObj.Free()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return &GitFile{data: OdbObj.Data()}, errors.New("Currently unimplemented")
+	return
 }
 
 func NewGitFileSystem(baseGitPath string) (*GitFileSystem, error) {
@@ -68,28 +72,60 @@ func NewGitFileSystem(baseGitPath string) (*GitFileSystem, error) {
 }
 
 type GitFile struct {
-	data []byte
+	name string
+	obj  *git.OdbObject
+	when time.Time
 }
 
 func (g *GitFile) Close() error {
-	return errors.New("Currently unimplemented")
+	g.obj.Free()
+	return nil
 }
 
 func (g *GitFile) Stat() (os.FileInfo, error) {
-	return os.Lstat("unimplemented")
+	return &GitFileInfo{name: g.name, size: int64(g.obj.Len()), modTime: g.when}, nil
 }
 
-func (g *GitFile) Readdir(count int) (infos []os.FileInfo, err error) {
-	var info os.FileInfo
-	info, err = os.Lstat("unimplemented")
-	infos = []os.FileInfo{info}
+func (g *GitFile) Readdir(count int) ([]os.FileInfo, error) {
+	return []os.FileInfo{}, nil
+}
+
+func (g *GitFile) Read(bytes []byte) (i int, e error) {
+	i, e = copy(bytes, g.obj.Data()), nil
+	log.Println(i)
 	return
-}
-
-func (g *GitFile) Read(bytes []byte) (int, error) {
-	return copy(bytes, g.data), errors.New("Currently unimplemented")
 }
 
 func (g *GitFile) Seek(offset int64, whence int) (int64, error) {
 	return int64(0), errors.New("Currently unimplemented")
+}
+
+type GitFileInfo struct {
+	name    string
+	size    int64
+	modTime time.Time
+}
+
+func (g *GitFileInfo) Name() string {
+	return g.name
+}
+
+func (g *GitFileInfo) Size() int64 {
+	return g.size
+}
+
+func (g *GitFileInfo) Mode() os.FileMode {
+	return os.FileMode(uint32(755))
+}
+
+func (g *GitFileInfo) ModTime() time.Time {
+	return g.modTime
+}
+
+func (g *GitFileInfo) IsDir() bool {
+	return false
+}
+
+func (g *GitFileInfo) Sys() interface{} {
+	return nil
 }
