@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/binary"
-	"encoding/hex"
-	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,13 +9,14 @@ import (
 	"strings"
 )
 
-const (
-	shepPath = "/Users/georgemacrorie/personal/shep.git"
+var (
+	shepPath = flag.String("g", "/Users/georgemacrorie/personal/shep.git", "Shep bare git repo")
+	port     = flag.String("p", "9292", "Port on which shep listens")
 )
 
 func generateServiceMessage() string {
 	packet := "# service=git-receive-pack"
-	prefix := intToHexString4(len(packet) + 4)
+	prefix := IntToHexString4(len(packet) + 4)
 	return fmt.Sprintf("%s%s0000", prefix, packet)
 }
 
@@ -27,7 +26,7 @@ func infoRefsRecievePackHandler(rw http.ResponseWriter, req *http.Request) {
 
 	strings.NewReader(generateServiceMessage()).WriteTo(rw)
 
-	cmd := exec.Command("git", "receive-pack", "--stateless-rpc", "--advertise-refs", shepPath)
+	cmd := exec.Command("git", "receive-pack", "--stateless-rpc", "--advertise-refs", *shepPath)
 
 	cmd.Stdout = rw
 
@@ -41,7 +40,7 @@ func receivePackHandler(rw http.ResponseWriter, req *http.Request) {
 	setCommonHeadersOnResponse(rw)
 	rw.Header().Add("Content-Type", "application/x-git-receive-pack-advertisement")
 
-	cmd := exec.Command("git", "receive-pack", "--stateless-rpc", shepPath)
+	cmd := exec.Command("git", "receive-pack", "--stateless-rpc", *shepPath)
 
 	cmd.Stdin = req.Body
 	cmd.Stdout = rw
@@ -59,39 +58,21 @@ func setCommonHeadersOnResponse(rw http.ResponseWriter) {
 	rw.Header().Add("Cache-Control", "no-cache, max-age=0, must-revalidate")
 }
 
-func padHexString(hex string) string {
-	if len(hex) >= 4 {
-		return hex
-	}
-	padding := ""
-	paddingLength := 4 - len(hex)
-	for i := 0; i < paddingLength; i++ {
-		padding += "0"
-	}
-	return padding + hex
-}
-
-func encodeIntToBytes(i int) (bytes []byte, err error) {
-	temp := make([]byte, 100)
-	length := binary.PutUvarint(temp, uint64(i))
-	bytes = make([]byte, length)
-	if lost := copy(bytes, temp); lost == length {
-		err = nil
-	} else {
-		bytes = temp
-		err = errors.New("Bytes got lost when copying: " + fmt.Sprintf("%d", lost))
-	}
-	return
-}
-
-func intToHexString4(i int) string {
-	bytes, _ := encodeIntToBytes(i)
-	return padHexString(hex.EncodeToString(bytes))
-}
-
 func main() {
+	flag.Parse()
+
 	http.HandleFunc("/_git/info/refs", infoRefsRecievePackHandler)
 	http.HandleFunc("/_git/git-receive-pack", receivePackHandler)
 
-	http.ListenAndServe(":9292", nil)
+	fileSystem, err := NewGitFileSystem(*shepPath)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+	http.HandleFunc("/favicon.ico", func(rw http.ResponseWriter, req *http.Request) {
+		http.Error(rw, "favicon not found", 404)
+	})
+	http.Handle("/", http.FileServer(fileSystem))
+
+	http.ListenAndServe(":"+*port, nil)
 }
