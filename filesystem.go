@@ -3,12 +3,11 @@ package main
 import (
 	"errors"
 	"github.com/libgit2/git2go"
-	//"ioutil"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
-	//"regexp"
 )
 
 type GitFileSystem struct {
@@ -16,14 +15,6 @@ type GitFileSystem struct {
 }
 
 func (g *GitFileSystem) Open(name string) (file http.File, err error) {
-	// var id string
-	// reg, err := regexp.Compile("^/(.*?)\\..*$")
-	// if matches := reg.FindStringSubmatch(name); len(matches) > 1 {
-	// 	id = matches[1]
-	// } else {
-	// 	id = name
-	// }
-	// log.Println(id)
 	odb, err := g.Repo.Odb()
 	if err != nil {
 		log.Fatal(err)
@@ -46,17 +37,31 @@ func (g *GitFileSystem) Open(name string) (file http.File, err error) {
 		log.Fatal(err)
 	}
 
-	tree.Walk(git.TreeWalkCallback(func(s string, entry *git.TreeEntry) int {
-		if entry.Name == name[1:] {
+	err = tree.Walk(git.TreeWalkCallback(func(s string, entry *git.TreeEntry) int {
+		nameSlice := strings.Split(name, "/")[1:]
+		nameSliceLen := len(nameSlice)
+		var targetName string
+		if nameSliceLen == 1 {
+			targetName = name[1:]
+		} else {
+			targetName = nameSlice[nameSliceLen-1]
+		}
+		prefix := strings.Join(nameSlice[:nameSliceLen-1], "/")
+		if prefix != "" {
+			prefix += "/"
+		}
+		if entry.Type == git.OBJ_BLOB && entry.Name == targetName && s == prefix {
 			OdbObj, err := odb.Read(entry.Id)
 			if err != nil {
 				panic(err)
 			}
-			file = &GitFile{name: name[1:], obj: OdbObj, when: commit.Committer().When}
+			file = &GitFile{name: targetName, obj: OdbObj, when: commit.Committer().When}
 		}
 		return 0
 	}))
-
+	if file == nil {
+		err = errors.New("File Not Found Exception")
+	}
 	return
 }
 
@@ -72,9 +77,11 @@ func NewGitFileSystem(baseGitPath string) (*GitFileSystem, error) {
 }
 
 type GitFile struct {
-	name string
-	obj  *git.OdbObject
-	when time.Time
+	name   string
+	obj    *git.OdbObject
+	when   time.Time
+	offset int
+	data   []byte
 }
 
 func (g *GitFile) Close() error {
@@ -91,13 +98,19 @@ func (g *GitFile) Readdir(count int) ([]os.FileInfo, error) {
 }
 
 func (g *GitFile) Read(bytes []byte) (i int, e error) {
-	i, e = copy(bytes, g.obj.Data()), nil
-	log.Println(i)
+	bytesLength := len(bytes)
+	if g.data == nil {
+		g.data = g.obj.Data()
+	}
+	end := g.offset + bytesLength
+	i, e = copy(bytes, g.data[g.offset:end]), nil
+	g.offset = end
 	return
 }
 
 func (g *GitFile) Seek(offset int64, whence int) (int64, error) {
-	return int64(0), errors.New("Currently unimplemented")
+	log.Println("offset" + string(offset))
+	return int64(0), nil
 }
 
 type GitFileInfo struct {

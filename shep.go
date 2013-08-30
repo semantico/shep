@@ -22,7 +22,7 @@ func generateServiceMessage() string {
 
 func infoRefsRecievePackHandler(rw http.ResponseWriter, req *http.Request) {
 	setCommonHeadersOnResponse(rw)
-	rw.Header().Add("Content-Type", "application/x-git-receive-pack-advertisement")
+	rw.Header().Set("Content-Type", "application/x-git-receive-pack-advertisement")
 
 	strings.NewReader(generateServiceMessage()).WriteTo(rw)
 
@@ -33,29 +33,42 @@ func infoRefsRecievePackHandler(rw http.ResponseWriter, req *http.Request) {
 	if err := cmd.Start(); err != nil {
 		log.Fatal(err)
 	}
-	cmd.Wait()
+
+	if err := cmd.Wait(); err != nil {
+		log.Fatal(err)
+	}
+
+	req.Body.Close()
+
 }
 
 func receivePackHandler(rw http.ResponseWriter, req *http.Request) {
 	setCommonHeadersOnResponse(rw)
-	rw.Header().Add("Content-Type", "application/x-git-receive-pack-advertisement")
+	rw.Header().Set("Content-Type", "application/x-git-receive-pack-result")
+	rw.Header().Set("Connection", "Keep-Alive")
 
 	cmd := exec.Command("git", "receive-pack", "--stateless-rpc", *shepPath)
 
 	cmd.Stdin = req.Body
+
 	cmd.Stdout = rw
 
 	if err := cmd.Start(); err != nil {
+		fmt.Println("Start failed")
 		log.Fatal(err)
 	}
 
-	cmd.Wait()
+	if state, err := cmd.Process.Wait(); err != nil {
+		log.Fatal(err)
+	} else {
+		fmt.Println(state.Success())
+	}
 }
 
 func setCommonHeadersOnResponse(rw http.ResponseWriter) {
-	rw.Header().Add("Expires", "Fri, 01 Jan 1980 00:00:00 GMT")
-	rw.Header().Add("Pragma", "no-cache")
-	rw.Header().Add("Cache-Control", "no-cache, max-age=0, must-revalidate")
+	rw.Header().Set("Expires", "Fri, 01 Jan 1980 00:00:00 GMT")
+	rw.Header().Set("Pragma", "no-cache")
+	rw.Header().Set("Cache-Control", "no-cache, max-age=0, must-revalidate")
 }
 
 func main() {
