@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -15,12 +16,36 @@ type GitFileSystem struct {
 }
 
 func (g *GitFileSystem) Open(name string) (file http.File, err error) {
+	commitish := "HEAD"
+
+	commitishRegexp, err := regexp.Compile("^(.*?)@(.*)$")
+	if err != nil {
+		panic(err)
+	}
+
+	nameSlice := strings.Split(name, "/")[1:]
+	nameSliceLen := len(nameSlice)
+	var targetName string
+	if nameSliceLen == 1 {
+		targetName = name[1:]
+	} else {
+		targetName = nameSlice[nameSliceLen-1]
+	}
+	if match := commitishRegexp.FindStringSubmatch(targetName); match != nil {
+		targetName = match[1]
+		commitish = match[2]
+	}
+	prefix := strings.Join(nameSlice[:nameSliceLen-1], "/")
+	if prefix != "" {
+		prefix += "/"
+	}
+
 	odb, err := g.Repo.Odb()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	obj, err := g.Repo.RevparseSingle("HEAD")
+	obj, err := g.Repo.RevparseSingle(commitish)
 	defer obj.Free()
 	if err != nil {
 		log.Fatal(err)
@@ -38,18 +63,6 @@ func (g *GitFileSystem) Open(name string) (file http.File, err error) {
 	}
 
 	err = tree.Walk(git.TreeWalkCallback(func(s string, entry *git.TreeEntry) int {
-		nameSlice := strings.Split(name, "/")[1:]
-		nameSliceLen := len(nameSlice)
-		var targetName string
-		if nameSliceLen == 1 {
-			targetName = name[1:]
-		} else {
-			targetName = nameSlice[nameSliceLen-1]
-		}
-		prefix := strings.Join(nameSlice[:nameSliceLen-1], "/")
-		if prefix != "" {
-			prefix += "/"
-		}
 		if entry.Type == git.OBJ_BLOB && entry.Name == targetName && s == prefix {
 			OdbObj, err := odb.Read(entry.Id)
 			if err != nil {
