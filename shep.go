@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	shepPath = flag.String("g", "/Users/georgemacrorie/personal/shep.git", "Shep bare git repo")
+	shepPath = flag.String("g", "/shep.git", "Shep bare git repo")
 	port     = flag.String("p", "9292", "Port on which shep listens")
 )
 
