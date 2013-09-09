@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"github.com/libgit2/git2go"
 	"log"
@@ -65,10 +66,11 @@ func (g *GitFileSystem) Open(name string) (file http.File, err error) {
 	err = tree.Walk(git.TreeWalkCallback(func(s string, entry *git.TreeEntry) int {
 		if entry.Type == git.OBJ_BLOB && entry.Name == targetName && s == prefix {
 			OdbObj, err := odb.Read(entry.Id)
+			defer OdbObj.Free()
 			if err != nil {
 				panic(err)
 			}
-			file = &GitFile{name: targetName, obj: OdbObj, when: commit.Committer().When}
+			file = &GitFile{name: targetName, reader: bytes.NewReader(OdbObj.Data()), when: commit.Committer().When}
 		}
 		return 0
 	}))
@@ -91,19 +93,16 @@ func NewGitFileSystem(baseGitPath string) (*GitFileSystem, error) {
 
 type GitFile struct {
 	name   string
-	obj    *git.OdbObject
 	when   time.Time
-	offset int
-	data   []byte
+	reader *bytes.Reader
 }
 
 func (g *GitFile) Close() error {
-	g.obj.Free()
 	return nil
 }
 
 func (g *GitFile) Stat() (os.FileInfo, error) {
-	return &GitFileInfo{name: g.name, size: int64(g.obj.Len()), modTime: g.when}, nil
+	return &GitFileInfo{name: g.name, size: int64(g.reader.Len()), modTime: g.when}, nil
 }
 
 func (g *GitFile) Readdir(count int) ([]os.FileInfo, error) {
@@ -111,19 +110,11 @@ func (g *GitFile) Readdir(count int) ([]os.FileInfo, error) {
 }
 
 func (g *GitFile) Read(bytes []byte) (i int, e error) {
-	bytesLength := len(bytes)
-	if g.data == nil {
-		g.data = g.obj.Data()
-	}
-	end := g.offset + bytesLength
-	i, e = copy(bytes, g.data[g.offset:end]), nil
-	g.offset = end
-	return
+	return g.reader.Read(bytes)
 }
 
 func (g *GitFile) Seek(offset int64, whence int) (int64, error) {
-	log.Println("offset" + string(offset))
-	return int64(0), nil
+	return g.reader.Seek(offset, whence)
 }
 
 type GitFileInfo struct {
